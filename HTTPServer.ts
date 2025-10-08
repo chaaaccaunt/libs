@@ -25,7 +25,7 @@ interface iPrimitive {
 }
 
 export interface iValidator extends iCommonValues {
-  isArray?: iValidator
+  isArray?: Omit<iValidator, "isArray">
   isPrimitive?: iPrimitive
   isObject?: {
     [key: string]: iValidator
