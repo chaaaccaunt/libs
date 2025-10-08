@@ -5,8 +5,6 @@ interface iCommonValues {
   optional?: boolean
 }
 
-type iPrimitiveTypes = "number" | "string" | "boolean"
-
 interface iPrimitiveTypesValue {
   number: {
     min: number,
@@ -15,19 +13,20 @@ interface iPrimitiveTypesValue {
   string: {
     minLength: number
     maxLength?: number
+    reg?: RegExp
   }
-  boolean: {
+  boolean: boolean
+}
 
-  }
+interface iPrimitive {
+  number?: iPrimitiveTypesValue["number"]
+  string?: iPrimitiveTypesValue["string"]
+  boolean?: iPrimitiveTypesValue["boolean"]
 }
 
 export interface iValidator extends iCommonValues {
-  isArray?: {
-
-  }
-  isPrimitive?: {
-    [T in iPrimitiveTypes]: iPrimitiveTypesValue[T]
-  }
+  isArray?: iValidator
+  isPrimitive?: iPrimitive
   isObject?: {
     [key: string]: iValidator
   }
@@ -66,11 +65,11 @@ export class HTTPServer {
     if (!process.env.VAR_ORIGIN) throw Error("VAR_ORIGIN is missing")
     this.server = createServer((request, response) => this.requestHandler(request, response))
   }
-  private assignJsonFunction(response: ServerResponse): ({ error, status, result }: { error: boolean, status: number, result: any }) => void {
+  private assignJsonFunction(response: ServerResponse, _origin: string): ({ error, status, result }: { error: boolean, status: number, result: any }) => void {
     return function ({ error, status, result }) {
       response.writeHead(status, {
         "access-control-allow-credentials": "true",
-        "access-control-allow-origin": "http://uibot.gtrktuva.local",
+        "access-control-allow-origin": _origin,
         "content-type": "application/json; charset=utf-8"
       })
       return response.end(JSON.stringify({ error, response: result }))
@@ -81,13 +80,13 @@ export class HTTPServer {
     request.on("data", (chunk: Buffer) => {
       body = Buffer.concat([body, chunk])
       if (body.length > 1024 * 5) {
-        response.json = this.assignJsonFunction(response)
+        response.json = this.assignJsonFunction(response, process.env.VAR_ORIGIN)
         return response.json({ error: true, status: 413, result: false })
       }
     })
     request.on("end", () => {
       if (!request.url || !request.method) return response.json({ error: true, status: 400, result: false });
-      response.json = this.assignJsonFunction(response)
+      response.json = this.assignJsonFunction(response, process.env.VAR_ORIGIN)
       const match = this.routes.get(`${request.method}:${request.url}`)
       if (process.env.VAR_DEBUG && !match) console.log("Mismatch endpoint url", request.url)
       if (!match) return response.json({ error: true, status: 404, result: false });
@@ -116,7 +115,8 @@ export class HTTPServer {
         return resolve()
       }
       if (route.validator && payload) {
-        const validPayload = this.payloadValidator(payload, route.validator)
+        const { error, message } = this.payloadValidator(payload, route.validator)
+        if (error) return response.json({ error, result: message, status: 422 })
       }
       route.callback(request.user, payload)
         .then(({ result }) => {
@@ -130,6 +130,36 @@ export class HTTPServer {
           return resolve()
         })
     })
+  }
+  private objectValidate(payload: { value: any, key: string }, scheme: iPrimitive): { error: boolean, message: string } {
+    const type = scheme.boolean ? "boolean" : scheme.number ? "number" : "string"
+    if (typeof payload.value !== type) return { error: true, message: `Проверьте корректность введенных данных. Значение "${payload.key}" имеет не валидные данные` }
+    if (type === "string" && scheme.string) {
+      if (payload.value.length < scheme.string.minLength) return { error: true, message: `Проверьте корректность введенных данных. Значение "${payload.key}" содержит меньше символов, чем ожидается` }
+      if (scheme.string.maxLength && payload.value.length > scheme.string.maxLength) return { error: true, message: `Проверьте корректность введенных данных. Значение "${payload.key}" содержит больше символов, чем ожидается` }
+      if (scheme.string.reg) {
+        if (!scheme.string.reg.test(payload.value)) return { error: true, message: `Проверьте корректность введенных данных. Значение "${payload.key}" содержит больше символов, чем ожидается` }
+      }
+    } else if (type === "number" && scheme.number) {
+      if (payload.value < scheme.number.min) return { error: true, message: `Проверьте корректность введенных данных. Значение "${payload.key}" содержит меньше значение, чем ожидается` }
+      if (scheme.number.max && payload.value > scheme.number.max) return { error: true, message: `Проверьте корректность введенных данных. Значение "${payload.key}" содержит больше значение, чем ожидается` }
+    } else if (type === "boolean" && scheme.boolean) { }
+    return { error: false, message: "" }
+  }
+  private arrayValidate(payload: any[], scheme: iValidator): { error: boolean, message: string } {
+    if (scheme.isObject) {
+      for (let i = 0; i < payload.length; i++) {
+        const { error, message } = this.payloadValidator(payload[i], scheme.isObject)
+        if (error) return { error: true, message: message };
+      }
+    }
+    if (scheme.isPrimitive) {
+      for (let i = 0; i < payload.length; i++) {
+        const { error, message } = this.objectValidate(payload[i], scheme.isPrimitive)
+        if (error) return { error: true, message: message };
+      }
+    }
+    return { error: false, message: "" }
   }
   private tokenValidator(request: IncomingMessage) {
     if (!request.headers.cookie || !request.headers.cookie.length) return false
@@ -149,22 +179,25 @@ export class HTTPServer {
   private payloadValidator(payload: Record<any, any>, scheme: { [key: string]: iValidator }): { error: boolean, message: string } {
     const types = Object.entries(scheme)
     const payloadKeys = Object.keys(payload)
-    const sameKeys = payloadKeys.every(v => types.findIndex(k => k[0] === v) !== -1)
-    console.log(sameKeys)
-    const result: { error: boolean, message: string } = { message: "", error: false }
+    const sameKeys = payloadKeys.findIndex(v => types.findIndex(k => k[0] === v) === -1)
+    if (sameKeys !== -1) return { error: true, message: `Проверьте корректность введенных данных. Значение "${payloadKeys[sameKeys]}" не предусмотренно` }
     for (let i = 0; i < types.length; i++) {
       const [key, type] = types[i]
-      if (type.optional && (!payload[key] || (Array.isArray(payload[key] && !payload[key].length)))) continue
-      if (type.isArray) {
-        if (!Array.isArray(payload[key])) return { error: true, message: `Проверьте корректность введенных данных. Значение "${payload[key]}" имеет не валидные данные` }
-
+      if (type.optional && typeof payload[key] === "undefined") continue
+      if (typeof payload[key] === "undefined" && !type.optional) return { error: true, message: `Проверьте корректность введенных данных. Отсутствует значение "${key}"` };
+      if (type.isPrimitive) {
+        const { error, message } = this.objectValidate({ key: key, value: payload[key] }, type.isPrimitive)
+        if (error) return { error: true, message: message };
+      } else if (type.isArray) {
+        if (!Array.isArray(payload[key])) return { error: true, message: `Проверьте корректность введенных данных. Значение "${key}" имеет не валидные данные` };
+        const { error, message } = this.arrayValidate(payload[key], type.isArray)
+        if (error) return { error: true, message: message };
       } else if (type.isObject) {
-        if (!Array.isArray(payload[key])) return { error: true, message: `Проверьте корректность введенных данных. Значение "${payload[key]}" имеет не валидные данные` }
-      } else if (type.isPrimitive) {
-
+        const { error, message } = this.payloadValidator(payload[key], type.isObject)
+        if (error) return { error: true, message: message };
       }
     }
-    return result
+    return { message: "", error: false }
   }
   private normalizePort(val: string) {
     const port = parseInt(val, 10);
