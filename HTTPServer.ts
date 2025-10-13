@@ -1,3 +1,4 @@
+import { UUID } from "crypto";
 import { createServer, IncomingMessage, Server, ServerResponse } from "http";
 import { verify } from "jsonwebtoken"
 
@@ -38,7 +39,9 @@ export interface iHTTPServer {
   VAR_TOKEN: string
 }
 
-export interface iUserToken { }
+export interface iUserToken {
+  uid: UUID
+}
 
 declare module "http" {
   interface IncomingMessage {
