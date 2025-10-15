@@ -68,12 +68,12 @@ export class HTTPServer {
     if (!process.env.VAR_ORIGIN) throw Error("VAR_ORIGIN is missing")
     this.server = createServer((request, response) => this.requestHandler(request, response))
   }
-  private assignJsonFunction(response: ServerResponse, _origin: string): ({ error, status, result }: { error: boolean, status: number, result: any }) => void {
+  private assignJsonFunction(response: ServerResponse,): ({ error, status, result }: { error: boolean, status: number, result: any }) => void {
     return function ({ error, status, result }) {
       response.writeHead(status, {
-        "access-control-allow-credentials": "true",
-        "access-control-allow-origin": _origin,
-        "content-type": "application/json; charset=utf-8"
+        "Access-Control-Allow-Credentials": "true",
+        "Access-Control-Allow-Origin": process.env.VAR_ORIGIN ? process.env.VAR_ORIGIN.trim() : "*",
+        "Content-Type": "application/json; charset=utf-8"
       })
       return response.end(JSON.stringify({ error, response: result }))
     }
@@ -83,20 +83,20 @@ export class HTTPServer {
     request.on("data", (chunk: Buffer) => {
       body = Buffer.concat([body, chunk])
       if (body.length > 1024 * 5) {
-        response.json = this.assignJsonFunction(response, process.env.VAR_ORIGIN)
+        response.json = this.assignJsonFunction(response)
         return response.json({ error: true, status: 413, result: false })
       }
     })
     request.on("end", () => {
       if (!request.url || !request.method) return response.json({ error: true, status: 400, result: false });
-      response.json = this.assignJsonFunction(response, process.env.VAR_ORIGIN)
-      const match = this.routes.get(`${request.method}:${request.url}`)
-      if (process.env.VAR_DEBUG && !match) console.log("Mismatch endpoint url", request.url)
-      if (!match) return response.json({ error: true, status: 404, result: false });
       try {
+        response.json = this.assignJsonFunction(response)
+        const match = this.routes.get(`${request.method}:${request.url}`)
+        if (process.env.VAR_DEBUG && !match) console.log("Mismatch endpoint url", request.url)
+        if (!match) return response.json({ error: true, status: 404, result: false });
         let payload: Record<any, any> | undefined = undefined
         if (match.method !== "GET") payload = JSON.parse(body.toString())
-        if (process.env.VAR_DEBUG) console.log("Handled route", match, `with payload: ${payload}`)
+        if (process.env.VAR_DEBUG) console.log("Handled route", match, payload ? `\npayload: ${payload}` : "")
         return this.endpointExecutor(request, response, match, payload)
       }
       catch (error) {
@@ -220,7 +220,7 @@ export class HTTPServer {
   use(routes: iRoute[]) {
     routes.forEach((r) => {
       this.routes.set(`${r.method}:${r.url}`, r)
-      if (process.env.VAR_DEBUG) console.log(`HTTP server apply route ${r}`)
+      if (process.env.VAR_DEBUG) console.log(`HTTP server applied route ${r.url}`)
     })
   }
 }
