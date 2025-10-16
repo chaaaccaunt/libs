@@ -72,7 +72,7 @@ export class HTTPServer {
     return function ({ error, status, result }) {
       response.writeHead(status, {
         "Access-Control-Allow-Credentials": "true",
-        "Access-Control-Allow-Origin": process.env.VAR_ORIGIN ? process.env.VAR_ORIGIN.trim() : "*",
+        "Access-Control-Allow-Origin": process.env.VAR_ORIGIN ? process.env.VAR_ORIGIN : "*",
         "Content-Type": "application/json; charset=utf-8"
       })
       return response.end(JSON.stringify({ error, response: result }))
