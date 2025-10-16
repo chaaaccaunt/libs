@@ -18,6 +18,6 @@ function readEnvFile(path: string) {
     if (comment.test(row)) return
     const [key, value] = row.split("=")
     if (!value) return
-    process.env[key] = value
+    process.env[key] = value.trim()
   })
 }
